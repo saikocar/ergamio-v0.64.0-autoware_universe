@@ -25,7 +25,6 @@
 #include <lanelet2_core/LaneletMap.h>
 #include <lanelet2_core/geometry/LineString.h>
 
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -110,19 +109,10 @@ private:
     const autoware_planning_msgs::msg::LaneletRoute & route,
     const autoware_perception_msgs::msg::TrafficLightGroupArray & traffic_lights) const;
 
-  /// @brief return true if there is a stop point and it is within margin distance of the stop line
-  [[nodiscard]] bool is_stop_point_within_margin_from_stop_line(
-    const std::optional<lanelet::BasicPoint2d> & stop_point,
-    const lanelet::BasicLineString2d & stop_line) const;
-
-  /// @brief return true if ego can safely pass an amber traffic light
-  [[nodiscard]] bool can_pass_amber_light(
-    const double distance_to_stop_line, const double current_velocity,
-    const double current_acceleration, const double time_to_cross_stop_line) const;
-
   Parameters params_;
   vehicle_info_utils::VehicleInfo vehicle_info_;
 };
 
 }  // namespace autoware::trajectory_validator::traffic_light_filter
+// NOLINTNEXTLINE
 #endif  // AUTOWARE__TRAJECTORY_VALIDATOR__FILTERS__TRAFFIC_RULE__TRAFFIC_LIGHT_COMPLIANCE_CHECKER_HPP_
