@@ -34,6 +34,63 @@
 
 namespace
 {
+struct Trajectory
+{
+  std::vector<autoware_planning_msgs::msg::TrajectoryPoint> trajectory_points;
+  lanelet::BasicLineString2d trajectory_linestring;
+  bool is_stopping_trajectory{false};
+};
+
+/// @brief prepare trajectory for traffic light compliance check
+Trajectory prepare_trajectory(
+  const autoware::trajectory_validator::traffic_light_filter::Inputs & input,
+  const autoware::trajectory_validator::traffic_light_filter::Parameters & params,
+  const double max_longitudinal_offset_m)
+{
+  Trajectory trajectory;
+  const auto distance_for_ego_to_stop = autoware::motion_utils::calculate_stop_distance(
+    input.current_velocity, input.current_acceleration,
+    params.checked_trajectory_length.deceleration_limit,
+    params.checked_trajectory_length.jerk_limit, params.delay_response_time);
+  const auto max_trajectory_length = distance_for_ego_to_stop.value_or(0.0);
+  auto length = 0.0;
+  for (const auto & p : input.trajectory) {
+    // skip points behind ego
+    if (rclcpp::Duration(p.time_from_start).seconds() < 0.0) {
+      continue;
+    }
+    const lanelet::BasicPoint2d lanelet_p(p.pose.position.x, p.pose.position.y);
+    if (!trajectory.trajectory_linestring.empty()) {
+      length += lanelet::geometry::distance2d(trajectory.trajectory_linestring.back(), lanelet_p);
+    }
+
+    trajectory.trajectory_points.push_back(p);
+    trajectory.trajectory_linestring.emplace_back(lanelet_p);
+
+    // skip points beyond the first stop, or skip once we reach the maximum length
+    trajectory.is_stopping_trajectory = p.longitudinal_velocity_mps <= 0.0;
+    if (trajectory.is_stopping_trajectory || length > max_trajectory_length) {
+      break;
+    }
+  }
+
+  if (trajectory.trajectory_linestring.size() >= 2 && max_longitudinal_offset_m > 0.0) {
+    // extend the trajectory linestring by the vehicle's longitudinal offset
+    const lanelet::BasicSegment2d last_segment(
+      trajectory.trajectory_linestring[trajectory.trajectory_linestring.size() - 2],
+      trajectory.trajectory_linestring.back());
+    const auto last_vector = last_segment.second - last_segment.first;
+    const auto last_length = boost::geometry::length(last_segment);
+    if (last_length > 0.0) {
+      const auto ratio = (last_length + max_longitudinal_offset_m) / last_length;
+      lanelet::BasicPoint2d front_vehicle_point = last_segment.first + last_vector * ratio;
+      trajectory.trajectory_linestring.emplace_back(front_vehicle_point);
+    }
+  }
+
+  return trajectory;
+}
+
 /// @brief get stop lines where ego need to stop, and their corresponding signals from the given
 /// traffic light groups
 std::vector<std::pair<lanelet::BasicLineString2d, autoware_perception_msgs::msg::TrafficLightGroup>>
@@ -97,55 +154,17 @@ void TrafficLightComplianceChecker::update_parameters(const Parameters & paramet
 tl::expected<ComplianceResult, std::string> TrafficLightComplianceChecker::check(
   const Inputs & input) const
 {
-  std::vector<autoware_planning_msgs::msg::TrajectoryPoint> trajectory;
-  lanelet::BasicLineString2d trajectory_ls;
-  const auto distance_for_ego_to_stop = autoware::motion_utils::calculate_stop_distance(
-    input.current_velocity, input.current_acceleration,
-    params_.checked_trajectory_length.deceleration_limit,
-    params_.checked_trajectory_length.jerk_limit, params_.delay_response_time);
-  const auto max_trajectory_length = distance_for_ego_to_stop.value_or(0.0);
-  auto length = 0.0;
-  bool is_stopping_trajectory = false;
-  for (const auto & p : input.trajectory) {
-    // skip points behind ego
-    if (rclcpp::Duration(p.time_from_start).seconds() < 0.0) {
-      continue;
-    }
-    const lanelet::BasicPoint2d lanelet_p(p.pose.position.x, p.pose.position.y);
-    if (!trajectory_ls.empty()) {
-      length += lanelet::geometry::distance2d(trajectory_ls.back(), lanelet_p);
-    }
+  const auto prepared_trajectory =
+    prepare_trajectory(input, params_, vehicle_info_.max_longitudinal_offset_m);
 
-    trajectory.push_back(p);
-    trajectory_ls.emplace_back(lanelet_p);
-
-    // skip points beyond the first stop, or skip once we reach the maximum length
-    is_stopping_trajectory = p.longitudinal_velocity_mps <= 0.0;
-    if (is_stopping_trajectory || length > max_trajectory_length) {
-      break;
-    }
-  }
-
-  if (trajectory_ls.size() < 2) {
+  if (prepared_trajectory.trajectory_linestring.size() < 2) {
     return ComplianceResult{};  // allow empty or stopped trajectories as they do not cross traffic
                                 // lights
   }
 
-  if (vehicle_info_.max_longitudinal_offset_m > 0.0) {
-    // extend the trajectory linestring by the vehicle's longitudinal offset
-    const lanelet::BasicSegment2d last_segment(
-      trajectory_ls[trajectory_ls.size() - 2], trajectory_ls.back());
-    const auto last_vector = last_segment.second - last_segment.first;
-    const auto last_length = boost::geometry::length(last_segment);
-    if (last_length > 0.0) {
-      const auto ratio = (last_length + vehicle_info_.max_longitudinal_offset_m) / last_length;
-      lanelet::BasicPoint2d front_vehicle_point = last_segment.first + last_vector * ratio;
-      trajectory_ls.emplace_back(front_vehicle_point);
-    }
-  }
   std::optional<lanelet::BasicPoint2d> stop_point;
-  if (is_stopping_trajectory) {
-    stop_point = trajectory_ls.back();
+  if (prepared_trajectory.is_stopping_trajectory) {
+    stop_point = prepared_trajectory.trajectory_linestring.back();
   }
 
   const auto [red_stop_lines, amber_stop_lines] =
@@ -155,7 +174,7 @@ tl::expected<ComplianceResult, std::string> TrafficLightComplianceChecker::check
 
   // Check for red light crossings
   for (const auto & red_stop_line : red_stop_lines) {
-    if (boost::geometry::intersects(trajectory_ls, red_stop_line)) {
+    if (boost::geometry::intersects(prepared_trajectory.trajectory_linestring, red_stop_line)) {
       if (is_stop_point_within_margin_from_stop_line(stop_point, red_stop_line)) {
         continue;
       }
@@ -167,9 +186,11 @@ tl::expected<ComplianceResult, std::string> TrafficLightComplianceChecker::check
   for (const auto & amber_stop_line : amber_stop_lines) {
     auto distance_to_stop_line = 0.0;
     std::optional<double> amber_stop_line_crossing_time;
-    for (size_t i = 0; i + 1 < trajectory.size(); ++i) {
+    for (size_t i = 0; i + 1 < prepared_trajectory.trajectory_points.size(); ++i) {
       lanelet::BasicPoints2d intersection_points;
-      const lanelet::BasicLineString2d segment{trajectory_ls[i], trajectory_ls[i + 1]};
+      const lanelet::BasicLineString2d segment{
+        prepared_trajectory.trajectory_linestring[i],
+        prepared_trajectory.trajectory_linestring[i + 1]};
       const auto segment_length = static_cast<double>(boost::geometry::length(segment));
       boost::geometry::intersection(segment, amber_stop_line, intersection_points);
       if (!intersection_points.empty()) {
@@ -178,15 +199,17 @@ tl::expected<ComplianceResult, std::string> TrafficLightComplianceChecker::check
         distance_to_stop_line += distance_to_intersection;
         const auto ratio = distance_to_intersection / segment_length;
         amber_stop_line_crossing_time = autoware::interpolation::lerp(
-          rclcpp::Duration(trajectory[i].time_from_start).seconds(),
-          rclcpp::Duration(trajectory[i + 1].time_from_start).seconds(), ratio);
+          rclcpp::Duration(prepared_trajectory.trajectory_points[i].time_from_start).seconds(),
+          rclcpp::Duration(prepared_trajectory.trajectory_points[i + 1].time_from_start).seconds(),
+          ratio);
         break;
       }
       distance_to_stop_line += segment_length;
     }
 
-    const auto current_velocity = trajectory.front().longitudinal_velocity_mps;
-    const auto current_acceleration = trajectory.front().acceleration_mps2;
+    const auto & first_trajectory_point = prepared_trajectory.trajectory_points.front();
+    const auto current_velocity = first_trajectory_point.longitudinal_velocity_mps;
+    const auto current_acceleration = first_trajectory_point.acceleration_mps2;
     if (amber_stop_line_crossing_time) {
       if (is_stop_point_within_margin_from_stop_line(stop_point, amber_stop_line)) {
         continue;
