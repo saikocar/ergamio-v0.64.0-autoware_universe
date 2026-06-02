@@ -24,7 +24,10 @@ if(NOT NVML_INCLUDE_DIRS)
 endif()
 
 if(NOT NVML_LIBRARIES)
-  find_library(NVML_LIBRARIES NAMES nvidia-ml)
+  # 2026-04-21: NVIDIA driver が提供するのは libnvidia-ml.so.1 (versioned) のみで
+  # unversioned libnvidia-ml.so が存在しないため、CUDA の stubs パスも検索対象に追加。
+  # 実行時は dynamic linker が driver 側の libnvidia-ml.so.1 を解決する NVIDIA 公式パターン。
+  find_library(NVML_LIBRARIES NAMES nvidia-ml PATHS /usr/local/cuda/lib64/stubs)
 endif()
 
 include(FindPackageHandleStandardArgs)

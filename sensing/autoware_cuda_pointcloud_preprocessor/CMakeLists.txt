@@ -51,15 +51,7 @@ include_directories(
 # cSpell: ignore expt
 list(APPEND CUDA_NVCC_FLAGS "--expt-relaxed-constexpr -diag-suppress 20012")
 list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_86,code=sm_86")
-list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_87,code=sm_87")
-list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_89,code=sm_89")
-if(CUDA_VERSION VERSION_LESS "13.0")
-  list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_101,code=sm_101")
-else()  # CUDA 13.0 renamed SM101 to SM110
-  list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_110,code=sm_110")
-endif()
-list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_120,code=sm_120")
-list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_120,code=compute_120")
+list(APPEND CUDA_NVCC_FLAGS "-gencode arch=compute_86,code=compute_86")
 
 # __host__ or __device__ annotation on lambda requires --extended-lambda nvcc flag
 list(APPEND CUDA_NVCC_FLAGS "--extended-lambda")

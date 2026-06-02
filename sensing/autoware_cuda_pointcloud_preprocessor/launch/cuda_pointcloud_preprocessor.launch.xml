@@ -5,8 +5,9 @@
   <arg name="output/pointcloud" default="/sensing/lidar/top/test"/>
 
   <arg name="cuda_pointcloud_preprocessor_param_file" default="$(find-pkg-share autoware_cuda_pointcloud_preprocessor)/config/cuda_pointcloud_preprocessor.param.yaml"/>
+  <arg name="node_name" default="cuda_pointcloud_preprocessor"/>
 
-  <node pkg="autoware_cuda_pointcloud_preprocessor" exec="cuda_pointcloud_preprocessor_node" name="cuda_pointcloud_preprocessor" output="screen">
+  <node pkg="autoware_cuda_pointcloud_preprocessor" exec="cuda_pointcloud_preprocessor_node" name="$(var node_name)" output="screen">
     <remap from="~/input/pointcloud" to="$(var input/pointcloud)"/>
     <remap from="~/input/imu" to="$(var input/imu)"/>
     <remap from="~/input/twist" to="$(var input/twist)"/>
