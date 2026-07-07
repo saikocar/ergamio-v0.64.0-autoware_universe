@@ -28,6 +28,7 @@
 #include <autoware/objects_of_interest_marker_interface/objects_of_interest_marker_interface.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
+#include <vehicle_std_msgs/msg/float64.hpp>
 
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
@@ -76,6 +77,10 @@ private:
   CommonParam common_param_;
   SlowDownPlanningParam slow_down_planning_param_;
   ObstacleFilteringParam obstacle_filtering_param_;
+
+  // 2025/05/20の改変: Laneletのspeed_limitから配信されるmax_ego_velocityの購読用
+  rclcpp::Subscription<vehicle_std_msgs::msg::Float64>::SharedPtr max_ego_velocity_sub_;
+  void on_max_ego_velocity(const vehicle_std_msgs::msg::Float64::ConstSharedPtr msg);
 
   // module publisher
   rclcpp::Publisher<Float32MultiArrayStamped>::SharedPtr debug_slow_down_planning_info_pub_;

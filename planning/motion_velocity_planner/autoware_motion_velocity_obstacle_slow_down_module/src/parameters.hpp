@@ -113,6 +113,7 @@ struct VelocityInterpolationParam
   double max_lat_margin;
   double min_ego_velocity;
   double max_ego_velocity;
+  double max_to_min_ego_velocity_ratio;
 };
 
 static const std::unordered_map<uint8_t, std::string> object_types_maps = {
@@ -200,10 +201,18 @@ struct SlowDownPlanningParam
             node, param_prefix, type_str, to_param_name(side, motion, "min_lat_margin"));
           p.max_lat_margin = get_object_parameter<double>(
             node, param_prefix, type_str, to_param_name(side, motion, "max_lat_margin"));
-          p.min_ego_velocity = get_object_parameter<double>(
-            node, param_prefix, type_str, to_param_name(side, motion, "min_ego_velocity"));
+          // NOTE: min_ego_velocity is no longer read directly. It is derived from
+          // max_ego_velocity and max_to_min_ego_velocity_ratio so that it scales together with
+          // max_ego_velocity when the latter is updated dynamically (e.g. from the lanelet speed
+          // limit). See on_max_ego_velocity().
+          // p.min_ego_velocity = get_object_parameter<double>(
+          //   node, param_prefix, type_str, to_param_name(side, motion, "min_ego_velocity"));
           p.max_ego_velocity = get_object_parameter<double>(
             node, param_prefix, type_str, to_param_name(side, motion, "max_ego_velocity"));
+          p.max_to_min_ego_velocity_ratio = get_object_parameter<double>(
+            node, param_prefix, type_str,
+            to_param_name(side, motion, "max_to_min_ego_velocity_ratio"));
+          p.min_ego_velocity = p.max_ego_velocity * p.max_to_min_ego_velocity_ratio;
         }
       }
       param.wheel_off_track_scale =
@@ -216,6 +225,21 @@ struct SlowDownPlanningParam
   {
     const auto & type_str = object_types_maps.at(label.label);
     return object_type_specific_param_per_object_type.at(type_str);
+  }
+
+  // 2025/05/20の改変: Laneletのspeed_limitから配信されるmax_ego_velocityを受け取り、
+  // 全object_type/side/motionのmax_ego_velocity, min_ego_velocityを更新する。
+  void on_max_ego_velocity(const double max_vel)
+  {
+    for (auto & [_, param] : object_type_specific_param_per_object_type) {
+      for (const auto side : {Side::Left, Side::Right}) {
+        for (const auto motion : {Motion::Moving, Motion::Static}) {
+          auto & p = param.get_velocity_param(side, motion);
+          p.max_ego_velocity = max_vel;
+          p.min_ego_velocity = max_vel * p.max_to_min_ego_velocity_ratio;
+        }
+      }
+    }
   }
 };
 }  // namespace autoware::motion_velocity_planner

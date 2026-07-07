@@ -178,6 +178,12 @@ void ObstacleSlowDownModule::init(rclcpp::Node & node, const std::string & modul
   slow_down_planning_param_ = SlowDownPlanningParam(node);
   obstacle_filtering_param_ = ObstacleFilteringParam(node);
 
+  // 2025/05/20の改変: Laneletのspeed_limitから配信されるmax_ego_velocityを購読し、
+  // slow_down_planning_param_のmax_ego_velocity/min_ego_velocityを動的に更新する。
+  max_ego_velocity_sub_ = node.create_subscription<vehicle_std_msgs::msg::Float64>(
+    "~/input/max_ego_velocity", rclcpp::QoS{1},
+    std::bind(&ObstacleSlowDownModule::on_max_ego_velocity, this, std::placeholders::_1));
+
   objects_of_interest_marker_interface_ = std::make_unique<
     autoware::objects_of_interest_marker_interface::ObjectsOfInterestMarkerInterface>(
     &node, "motion_velocity_planner_common");
@@ -212,6 +218,12 @@ void ObstacleSlowDownModule::init(rclcpp::Node & node, const std::string & modul
 void ObstacleSlowDownModule::update_parameters(
   [[maybe_unused]] const std::vector<rclcpp::Parameter> & parameters)
 {
+}
+
+void ObstacleSlowDownModule::on_max_ego_velocity(
+  const vehicle_std_msgs::msg::Float64::ConstSharedPtr msg)
+{
+  slow_down_planning_param_.on_max_ego_velocity(msg->data);
 }
 
 std::vector<autoware::motion_velocity_planner::SlowDownPointData>
